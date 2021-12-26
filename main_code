@@ -1,0 +1,883 @@
+
+
+/*
+Navodila za uporabo:
+Poveži napravo na napajanje in se poveži na "Začasni wifi" omrežje, za katerega velja
+geslo "wifi geslo". To lahko storiš na računalniku ali pa telefonu. Za tem na
+izbrani napravi odpri brskalnik (npr. Google Chrome, Safari...) in v iskalno vrstico 
+na vrhu vtipkaj 192.168.4.1. Odpre se spletna stran, kjer vneseš ime (SSID) domačega
+wifi omrežja in geslo (PASSWORD). Nato pritisni gumb "oddaj". Za tem se naprava
+ponastavi in začne normalno obratovati. Navedeni postopek bo potrebno ponoviti samo,
+če zamenjaš domači wifi.
+*/
+
+
+//za narest: test hardware, najti pravi tranzistor, premisli bareljack napajanje, 
+//preveri celoto(led cel in password set), maybe test tranzistor pa to na minor scale
+
+
+#include "NTPClient.h"
+#include "ESP8266WiFi.h"
+#include "WiFiUdp.h"
+#include <Adafruit_NeoPixel.h>
+#include <ESP8266HTTPClient.h>
+#include <ESP8266WebServer.h>
+#include <EEPROM.h>
+
+#define LED_PIN 13
+#define LED_ON_PIN 12
+int LED_NUM=21;
+int FADE_STEPS=3;
+Adafruit_NeoPixel pixels(LED_NUM, LED_PIN, NEO_GRB + NEO_KHZ800);
+
+//definiranje casovnih meja v minutah
+float orange=360.0 ; /*unsigned long ORANGE=0xff7f00;*/
+float yellow=570.0;
+float green=780.0;
+float cyan=990.0;
+float blue=1200.0;
+float purple=1410.0;
+
+//wifi;
+int i = 0;
+int statusCode;
+const char *ssid = "clock";
+const char *password = "wooden_clock";
+boolean connection;
+String st;
+String content;
+
+bool testWifi(void);
+void launchWeb(void);
+void setupAP(void);
+
+ESP8266WebServer server(80);
+//
+
+int ure,minute,sekunde,cajt,fade_time,n,led_min,led_h,minute_prej,ure_prej,minute_pred_resetom;
+int q=0,w,j,k;
+int w_set,j_set,k_set;
+uint32_t cas,cas_odvzema; int devetine_old, devetine;
+uint32_t cass=0;
+float kolicnik;int a=0;int f=0;//a=experiment variable za fade fade-a; f=experiment variable za preklop med fix gradientom in fade animationom
+/*Color orange = Color(255,127,0);
+Color yellow=Color(255,255,0);*/
+int zacetek_dneva=25200; //7:00
+int konec_dneva=82800;//23:00 - resetiramo millis tako, da ob zac. dneva resetiramo esp
+int vklop=0;
+const long utcOffsetInSeconds = 7200;
+
+
+
+WiFiUDP ntpUDP;
+NTPClient timeClient(ntpUDP, "pool.ntp.org", utcOffsetInSeconds);
+//~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+
+void wifi_temporary()
+{
+  //refresha cajt
+Serial.println("Reading EEPROM ssid");
+
+  String esid;
+  for (int i = 0; i < 32; ++i)
+  {
+    esid += char(EEPROM.read(i));
+  }
+  Serial.println();
+  Serial.print("SSID: ");
+  Serial.println(esid);
+  Serial.println("Reading EEPROM pass");
+
+  String epass = "";
+  for (int i = 32; i < 96; ++i)
+  {
+    epass += char(EEPROM.read(i));
+  }
+  Serial.print("PASS: ");
+  Serial.println(epass);
+
+
+  WiFi.begin(esid.c_str(), epass.c_str());
+  if (testWifi())
+  {
+    Serial.println("Succesfully Connected!!!");
+    connection=1;
+    return;
+  }
+  else
+  {
+    Serial.println("Turning the HotSpot On");
+    launchWeb();
+    setupAP();// Setup HotSpot
+  }
+
+  Serial.println();
+  Serial.println("Waiting.");
+  int test=0;
+  while ((WiFi.status() != WL_CONNECTED))
+  {if(test>=10){wifi_temporary();}
+    Serial.print(".");
+    delay(100);
+    server.handleClient();
+    test++;
+  }
+timeClient.begin();
+
+timeClient.update();
+delay(10);
+ure = timeClient.getHours();
+minute = timeClient.getMinutes();
+sekunde = timeClient.getSeconds();
+delay(10);
+WiFi.disconnect();
+}
+
+
+
+void setup() {
+  //digitalWrite(LED_ON_PIN,0);
+ Serial.begin(115200);
+pixels.begin();
+digitalWrite(LED_ON_PIN,1); //ob vklopu da napetost ledicam (external 2A)
+//spletni_cas();
+
+ WiFi.disconnect();
+  EEPROM.begin(512); //Initialasing EEPROM
+delay(10);
+wifi_temporary();
+}
+
+
+void loop() 
+{//ugotovi flow wifi stuffa (po connectionu ne probava več?)
+
+
+  //main_fade();
+if ((WiFi.status() == WL_CONNECTED))
+  {while(connection==1){  
+  ura();
+//IDEJA: if(cas>=konec_dneva){delay(zacetek_dneva+(24h-konec_dneva));espRESTART()}//parametra konec in zac set via phone?
+//za millis reset, ura se ugasne ponoči
+  if(q==1){pixels.show();delay(10);pixels.clear();Serial.println("izpisujem");} 
+  else{q=0;}
+  }
+}}
+
+void spletni_cas()
+{
+  WiFi.begin(ssid, password);
+
+while ( WiFi.status() != WL_CONNECTED ) {
+delay ( 500 );
+Serial.print ( "." );
+timeClient.begin();
+
+timeClient.update();
+delay(100);
+ure = timeClient.getHours();
+minute = timeClient.getMinutes();
+sekunde = timeClient.getSeconds();
+delay(100);
+WiFi.disconnect();
+}}
+
+void ura()
+{ 
+  cas=millis();
+  if((cas-cass)>=1000){cass=cas;sekunde++;}
+  //if (cas>=1000){ sekunde = sekunde + cas;cas=0;}//mozno da pri teh ifih vseeno gre v led ura, če se npr. izvede vrhni if
+  if (sekunde>=60){minute++;sekunde=0;time_switch_minute();}
+  if (cas-cas_odvzema>300000){cas_odvzema=cas;spletni_cas();}
+  if (minute==60){ure++;minute=0;time_switch_ure();}
+  if(minute-minute_pred_resetom>=10){minute_pred_resetom=minute;wifi_temporary();}
+  else if (ure==24){ure=0;}
+  else
+  {
+    //Serial.println("|||||||izvedla se bo led ura||||||||");
+    led_ura();
+  }
+  cajt=(ure*3600)+minute*60+sekunde;
+  if(cajt>=konec_dneva){fade_out_loop();}
+  if(cajt>=zacetek_dneva){fade_in_loop();}
+  if(ure==3&&minute==33&&sekunde==33){ESP.reset();}
+  else if(ure==3&&minute==33&&sekunde==34){ESP.reset();} //dva za vsak slucaj ce se zgodi time dilation
+  Serial.print("ure:  ");
+  Serial.print(ure);
+  Serial.print("  ");
+  Serial.print("Minute:  ");
+  Serial.print(minute);
+  Serial.print("  ");
+  Serial.print("Sekunde:  ");
+  Serial.println(sekunde);
+}
+
+void led_ura()
+{
+    led_min=minute/5;
+    led_h=ure-1;
+    if(led_h>12){led_h=led_h-12;}
+    main_fade();
+    Serial.print("|||f= ");
+    if(f==0){
+    Serial.println(f);  
+    Serial.print("Led Ura");
+    Serial.print("    Ure: ");
+    Serial.print(led_h);
+      if(led_min!=ure){
+    Serial.print("  Minute: ");
+    Serial.print(led_min);
+    Serial.print("   w:");Serial.print(w);Serial.print("    j:");Serial.print(j);Serial.print("     k:");Serial.println(k);
+    pixels.setPixelColor(led_min, pixels.Color(w,j,k));
+    pixels.setPixelColor(led_h, pixels.Color(255,255,255));}//poglej če bi se barve kazalcev spreminjale
+  else{pixels.setPixelColor(led_min, pixels.Color(255-w,255-w,255-w));}
+    }
+  q=1;
+}
+
+void time_switch_minute()//fade out/in za min -------------- ta thing lowkey kinda ne dela
+{//samo setas color pr obeh, zato je pri običnih kazalcih else, da preprosto drži uro ko fade ni poterben
+  if((minute==0)||(minute==5)||(minute==10)||(minute==15)||(minute==20)||(minute==25)||(minute==30)||(minute==35)||(minute==40)||(minute==45)||(minute==50)||(minute==55)){
+  q=0;//spremenljivka za pixels.show() command //zgornjim cifram za primerjavo sicer +1
+  //minute_prej=minute-1;
+  led_min = minute/5;
+  if(led_min==0){minute_prej=11;}else{minute_prej=led_min-1;}
+  w_set,j_set,k_set=0;
+  //zgrunti izbiro barv kazalcev
+  //color picker
+      Serial.print(" LED minute: "); Serial.print(led_min); Serial.print(" Minute prej: "); Serial.println(minute_prej);
+  for(int t=0;t<255;t++)//for zanka za fade in/out
+    {w_set+=t;j_set+=t;k_set+=t;
+    Serial.println("Minute switch 1");
+    main_fade();//ker znotraj for zanke velikokrat prikaze led barve
+    if(w_set>=w){w_set=w;}//ugotov kako da ne bo limitan na en color
+    if(j_set>=j){j_set=j;}
+    if(k_set>=k){k_set=k;}
+      pixels.setPixelColor(minute_prej,pixels.Color(w-w_set,j-j_set,k-k_set));
+            Serial.println("Minute switch 2");
+        if(led_min!=ure){
+      pixels.setPixelColor(led_min,pixels.Color(w_set,j_set,k_set));
+    pixels.setPixelColor(led_h,pixels.Color(255,255,255));}
+    else{pixels.setPixelColor(led_min,pixels.Color(255-w,255-w,255-w));}
+    Serial.println("Minute switch 3");
+    pixels.show();
+    delay(10);
+    pixels.clear();
+    }}
+}
+
+void time_switch_ure()//za h
+{
+  q=0;
+  ure_prej=ure-1;
+  for(int u=0;u<=255;u++)//<= da ne bodo ledice ostale na 1/delno lit up
+    {
+      pixels.setPixelColor(ure_prej,pixels.Color(255-u,255-u,255-u));
+      pixels.setPixelColor(ure,pixels.Color(u,u,u));
+      main_fade();
+      pixels.setPixelColor(led_min,pixels.Color(w,j,k));
+      Serial.println("!!Time Switch Ure!!");
+      pixels.show();
+      //delay(20);
+      pixels.clear();
+    }
+}
+
+void time_switch_color_picker(String color)
+{
+  if(color=="orange"){w=255;j=127;k=0;/*Serial.print(color);*/}
+  if(color=="yellow"){w=255;j=255;k=0;/*Serial.print(color);*/}
+  if(color=="green"){w=0;j=255;k=0;/*Serial.print(color);*/}
+  if(color=="cyan"){w=0;j=255;k=255;/*Serial.print(color);*/}
+  if(color=="blue"){w=0;j=0;k=255;/*Serial.print(color);*/}
+  if(color=="purple"){w=255;j=0;k=255;/*Serial.print(color);*/}
+}
+
+void main_fade()//gradual fade za osrednjo sliko
+{
+  //code
+  float fade_time=60*ure+minute;
+  if((orange<fade_time)&&(fade_time<yellow)){kolicnik=((fade_time-orange)/(yellow-orange)); orange_yellow_gradient(kolicnik);}
+  if((yellow<fade_time)&&(fade_time<green)){kolicnik=((fade_time-yellow)/(green-yellow)); yellow_green_gradient(kolicnik);}
+  if((green<fade_time)&&(fade_time<cyan)){kolicnik=((fade_time-green)/(cyan-green)); green_cyan_gradient(kolicnik);}
+  if((cyan<fade_time)&&(fade_time<blue)){kolicnik=((fade_time-cyan)/(blue-cyan)); cyan_blue_gradient(kolicnik);}
+  if((blue<fade_time)&&(fade_time<purple)){kolicnik=((fade_time-blue)/(purple-blue)); blue_purple_gradient(kolicnik);}
+  //ura();
+  /*Serial.print(fade_time);
+  Serial.print("     ");
+  Serial.print(blue);
+  Serial.print("   ");
+  Serial.print(purple);
+  Serial.print("    ");
+  Serial.print(fade_time-blue);
+  Serial.print("    ");
+  Serial.print(purple-blue);
+  Serial.print("    ");
+  Serial.println(kolicnik);*/
+  // Serial.println("Fade Time Init");
+}
+
+void orange_yellow_gradient(float gradient)//stacionaren center gradient
+{
+ int devetine = gradient*10;
+ if (a==0){devetine_old=devetine;a=1;}
+ if(devetine!=devetine_old){orange_yellow_fade(devetine);}
+ int devetine_old = devetine;
+ if(f==0){
+ for (int i=12;i<(LED_NUM - devetine);i++)
+    {
+      pixels.setPixelColor(i,pixels.Color(255,127,0));
+            Serial.print("   ");
+      Serial.print(i);
+    }
+     Serial.print("  |  ");
+    float q=1.0/3.0;//ker gre od 127 do 255
+    n=1.0;
+    if (devetine<3){FADE_STEPS=devetine;}
+    else{FADE_STEPS=3;}
+ for (int i=(LED_NUM-devetine);i<(LED_NUM-devetine+FADE_STEPS);i++)
+    {
+      pixels.setPixelColor(i, pixels.Color(255,127+127*q*n,0));//naredi fade v treh korakih
+            int s=127+127*q*n;
+      Serial.print(s);
+      Serial.print("   ");
+      Serial.print(FADE_STEPS);
+      Serial.print("   .  ");
+      Serial.print(i);
+      n+=1;
+    }
+     Serial.print("  |  ");
+ if(devetine>3)
+  {
+    for(int i=(LED_NUM-devetine+FADE_STEPS);i<LED_NUM;i++)
+      {
+        pixels.setPixelColor(i, pixels.Color(255,255,0));
+                      Serial.print("   ");
+      Serial.print(i);
+      }
+       Serial.print("  |  ");
+  }
+  //pixels.show();
+  if((1<devetine)&&(devetine<6)){time_switch_color_picker("orange");}//not sure why sam ok
+  else /*if((6<devetine)&&(devetine<10))*/{time_switch_color_picker("yellow");}
+
+    Serial.print("devetine:  ");
+  Serial.print(devetine);
+  Serial.print("   ");
+  Serial.print("LED za minute: ");
+  Serial.print(led_min);
+  Serial.print("   Gradient:");
+  Serial.println(gradient);
+}else{Serial.print("Izvedla se je animacija, zato se fiksen prikaz ni.");f=0;}}
+
+//------------------------------------------------------------------
+void orange_yellow_fade(unsigned int float_k) //animiran center gradient ; TEST FUNCTION!!!!!!!!!!!!!!!!!!!!
+{
+//test potreben, maybe bo nenavaden zamik med kazalci fade pa main animacija fadeom
+for(int b=0;b<=42;b++)//42=127/3; različen gradient-->spremeni cifre, drgač same thing
+{     for (int i=12;i<(LED_NUM-(devetine+1));i++){pixels.setPixelColor(i,pixels.Color(255,127,0));}
+pixels.setPixelColor((LED_NUM-devetine),pixels.Color(255,127+b,0));
+pixels.setPixelColor((LED_NUM-(devetine-1)),pixels.Color(255,127+(1*42)+b,0));
+pixels.setPixelColor((LED_NUM-(devetine-2)),pixels.Color(255,127+(2*42)+b,0));
+      if(devetine>3){for(int i=(LED_NUM-(devetine-3));i<LED_NUM;i++){pixels.setPixelColor(i, pixels.Color(255,255,0));}}
+  if((1<devetine)&&(devetine<6)){time_switch_color_picker("orange");}else /*if((6<devetine)&&(devetine<10))*/{time_switch_color_picker("yellow");}
+  if(led_min!=ure){pixels.setPixelColor(led_min, pixels.Color(w,j,k));pixels.setPixelColor(led_h, pixels.Color(255,255,255));}
+      else{pixels.setPixelColor(led_min, pixels.Color(255-w,255-w,255-w));}
+//delay(20);
+pixels.show();      
+}f=1;}
+//-------------------------------------------------------------------
+
+void yellow_green_gradient(float gradient)
+{
+int devetine = gradient*10;
+ if (a==0){devetine_old=devetine;a=1;}
+ if(devetine!=devetine_old){yellow_green_fade(devetine);}
+ int devetine_old = devetine;
+ if(f==0){
+ for (int i=12;i<(LED_NUM - devetine);i++)
+    {
+      pixels.setPixelColor(i,pixels.Color(255,255,0));
+            Serial.print("   ");
+      Serial.print(i);
+    }
+     Serial.print("  |  ");
+    float q=1.0/3.0;
+    n=1.0;
+    if (devetine<3){FADE_STEPS=devetine;}
+    else{FADE_STEPS=3;}
+ for (int i=(LED_NUM-devetine);i<(LED_NUM-devetine+FADE_STEPS);i++)
+    {
+      pixels.setPixelColor(i, pixels.Color(255-127*q*n,255,0));
+            int s=255-127*q*n;
+      Serial.print(s);
+      Serial.print("   ");
+      Serial.print(FADE_STEPS);
+      Serial.print("   .  ");
+      Serial.print(i);
+      n+=1;
+    }
+     Serial.print("  |  ");
+ if(devetine>3)
+  {
+    for(int i=(LED_NUM-devetine+FADE_STEPS);i<=LED_NUM;i++)
+      {
+        pixels.setPixelColor(i, pixels.Color(127,255,0));
+                      Serial.print("   ");
+      Serial.print(i);
+      }
+       Serial.print("  |  ");
+  }
+  //pixels.show();
+  if((1<devetine)&&(devetine<6)){time_switch_color_picker("yellow");}
+  else /*if((6<devetine)&&(devetine<10))*/{time_switch_color_picker("green");}
+
+  Serial.print("devetine:  ");
+  Serial.print(devetine);
+  Serial.print("   ");
+  Serial.print("LED za minute: ");
+  Serial.print(led_min);
+  Serial.print("   Gradient:");
+  Serial.println(gradient);
+}else{Serial.print("Izvedla se je animacija, zato se fiksen prikaz ni.");f=0;}}
+
+//------------------------------------------------------------------
+void yellow_green_fade(unsigned int float_k) //animiran center gradient ; TEST FUNCTION!!!!!!!!!!!!!!!!!!!!
+{
+//test potreben, maybe bo nenavaden zamik med kazalci fade pa main animacija fadeom
+for(int b=0;b<=42;b++)//42=127/3; različen gradient-->spremeni cifre, drgač same thing
+{     for (int i=12;i<(LED_NUM-(devetine+1));i++){pixels.setPixelColor(i,pixels.Color(255,255,0));}
+pixels.setPixelColor((LED_NUM-devetine),pixels.Color(255-b,255,0));
+pixels.setPixelColor((LED_NUM-(devetine-1)),pixels.Color(255-(2*b),255,0));//test ce je 2 oz. 3*b boljse od 42+b
+pixels.setPixelColor((LED_NUM-(devetine-2)),pixels.Color(255-(3*b),255,0));
+      if(devetine>3){for(int i=(LED_NUM-(devetine-3));i<LED_NUM;i++){pixels.setPixelColor(i, pixels.Color(127,255,0));}}
+  if((1<devetine)&&(devetine<6)){time_switch_color_picker("yellow");}else /*if((6<devetine)&&(devetine<10))*/{time_switch_color_picker("green");}
+  if(led_min!=ure){pixels.setPixelColor(led_min, pixels.Color(w,j,k));pixels.setPixelColor(led_h, pixels.Color(255,255,255));}
+      else{pixels.setPixelColor(led_min, pixels.Color(255-w,255-w,255-w));}
+//delay(20);
+pixels.show();      
+}f=1;}
+//-------------------------------------------------------------------
+
+void green_cyan_gradient(float gradient)
+{
+ int devetine = gradient*10;
+ if (a==0){devetine_old=devetine;a=1;}
+ if(devetine!=devetine_old){yellow_green_fade(devetine);}
+ int devetine_old = devetine;
+ if(f==0){
+ for (int i=12;i<(LED_NUM - devetine);i++)
+    {
+      pixels.setPixelColor(i, pixels.Color(127,255,0));
+      int a=127; int b=255; int c=0;
+Serial.print("LED: ");Serial.print(i);
+      Serial.print("  Barva: ");Serial.print(a); Serial.print(" , ");Serial.print(b); Serial.print(" , ");Serial.println(c);
+    }
+     Serial.println("Nov for loop");
+    float q=1.0/3.0;
+    n=1.0;
+    if (devetine<3){FADE_STEPS=devetine;}
+    else{FADE_STEPS=3;}
+ for (int i=(LED_NUM-devetine);i<(LED_NUM-devetine+FADE_STEPS);i++)
+    {
+      pixels.setPixelColor(i, pixels.Color(127-127*q*n,255,0+255*q*n));
+           /* int s=127-127*q*n;
+      Serial.print(s);
+      Serial.print("   ");
+      Serial.print(FADE_STEPS);
+      Serial.print("   .  ");
+      Serial.print(i);*/
+      int a=127-127*q*n; int b=255; int c=0+255*q*n;
+      Serial.print("LED: ");Serial.print(i);
+      Serial.print("  Barva: ");Serial.print(a); Serial.print(" , ");Serial.print(b); Serial.print(" , ");Serial.println(c);
+      n=n+1.0;
+    }
+     Serial.println("Nov for loop");
+ if(devetine>3)
+  {
+    for(int i=(LED_NUM-devetine+FADE_STEPS);i<=LED_NUM;i++)
+      {
+        pixels.setPixelColor(i, pixels.Color(0,255,255));
+       Serial.print("LED: ");Serial.print(i);
+      Serial.print("  Barva: ");Serial.print("0"); Serial.print(" , ");Serial.print("255"); Serial.print(" , ");Serial.println("255");
+      }
+       Serial.println("Nov for loop");
+  }
+ // pixels.show();
+if((1<devetine)&&(devetine<6)){time_switch_color_picker("green");}
+  else/* if((6<devetine)&&(devetine<10))*/{time_switch_color_picker("cyan");}
+
+  Serial.print("devetine:  ");
+  Serial.print(devetine);
+  Serial.print("   ");
+  Serial.print("LED za minute: ");
+  Serial.print(led_min);
+  Serial.print("   Gradient:");
+  Serial.println(gradient);
+}else{Serial.print("Izvedla se je animacija, zato se fiksen prikaz ni.");f=0;}}
+
+//------------------------------------------------------------------
+void green_cyan_fade(unsigned int float_k) //animiran center gradient ; TEST FUNCTION!!!!!!!!!!!!!!!!!!!!
+{
+//test potreben, maybe bo nenavaden zamik med kazalci fade pa main animacija fadeom
+for(int b=0;b<=42;b++)//42=127/3; različen gradient-->spremeni cifre, drgač same thing
+{     for (int i=12;i<(LED_NUM-(devetine+1));i++){pixels.setPixelColor(i,pixels.Color(127,255,0));}
+pixels.setPixelColor((LED_NUM-devetine),pixels.Color(127-b,255,2*b));
+pixels.setPixelColor((LED_NUM-(devetine-1)),pixels.Color(127-(2*b),255,4*b));//test ce je 2 oz. 3*b boljse od 42+b
+pixels.setPixelColor((LED_NUM-(devetine-2)),pixels.Color(127-(3*b),255,6*b));
+      if(devetine>3){for(int i=(LED_NUM-(devetine-3));i<LED_NUM;i++){pixels.setPixelColor(i, pixels.Color(0,255,255));}}
+  if((1<devetine)&&(devetine<6)){time_switch_color_picker("green");}else /*if((6<devetine)&&(devetine<10))*/{time_switch_color_picker("cyan");}
+  if(led_min!=ure){pixels.setPixelColor(led_min, pixels.Color(w,j,k));pixels.setPixelColor(led_h, pixels.Color(255,255,255));}
+      else{pixels.setPixelColor(led_min, pixels.Color(255-w,255-w,255-w));}
+//delay(20);
+pixels.show();      
+}f=1;}
+//-------------------------------------------------------------------
+
+void cyan_blue_gradient(float gradient)
+{
+ int devetine = gradient*10;
+ if (a==0){devetine_old=devetine;a=1;}
+ if(devetine!=devetine_old){cyan_blue_fade(devetine);}
+ int devetine_old = devetine;
+ if(f==0){
+ for (int i=12;i<(LED_NUM - devetine);i++)
+    {
+      pixels.setPixelColor(i,pixels.Color(0,255,255));
+         Serial.print("   ");
+      Serial.print(i);
+    }
+    Serial.print("  |  ");
+    float q=1.0/3.0;
+    n=1.0;
+    if (devetine<3){FADE_STEPS=devetine;}
+    else{FADE_STEPS=3;}
+ for (int i=(LED_NUM-devetine);i<(LED_NUM-devetine+FADE_STEPS);i++)
+    {
+      pixels.setPixelColor(i, pixels.Color(0,255-255*q*n,255));
+            int s=255-255*q*n;
+      Serial.print(s);
+      Serial.print("   ");
+      Serial.print(FADE_STEPS);
+      Serial.print("   .  ");
+      Serial.print(i);
+      n+=1;
+    }
+     Serial.print("  |  ");
+ if(devetine>3)
+  {
+    for(int i=(LED_NUM-devetine+FADE_STEPS);i<LED_NUM;i++)
+      {
+        pixels.setPixelColor(i, pixels.Color(0,0,255));
+                      Serial.print("   ");
+      Serial.print(i);
+      }
+       Serial.print("  |  ");
+  }
+ // pixels.show();
+ if((1<devetine)&&(devetine<6)){time_switch_color_picker("cyan");}
+  else /*if((6<devetine)&&(devetine<10))*/{time_switch_color_picker("blue");}
+
+  Serial.print("devetine:  ");
+  Serial.print(devetine);
+  Serial.print("   ");
+  Serial.print("LED za minute: ");
+  Serial.print(led_min);
+  Serial.print("   Gradient:");
+  Serial.println(gradient);
+}else{Serial.print("Izvedla se je animacija, zato se fiksen prikaz ni.");f=0;}}
+
+//------------------------------------------------------------------
+void cyan_blue_fade(unsigned int float_k) //animiran center gradient ; TEST FUNCTION!!!!!!!!!!!!!!!!!!!!
+{
+//test potreben, maybe bo nenavaden zamik med kazalci fade pa main animacija fadeom
+for(int b=0;b<=42;b++)//42=127/3; različen gradient-->spremeni cifre, drgač same thing
+{     for (int i=12;i<(LED_NUM-(devetine+1));i++){pixels.setPixelColor(i,pixels.Color(0,255,255));}
+pixels.setPixelColor((LED_NUM-devetine),pixels.Color(0,255-(2*b),255));
+pixels.setPixelColor((LED_NUM-(devetine-1)),pixels.Color(0,255-(4*b),255));//test ce je 2 oz. 3*b boljse od 42+b
+pixels.setPixelColor((LED_NUM-(devetine-2)),pixels.Color(0,255-(6*b),255));
+      if(devetine>3){for(int i=(LED_NUM-(devetine-3));i<LED_NUM;i++){pixels.setPixelColor(i, pixels.Color(0,0,255));}}
+  if((1<devetine)&&(devetine<6)){time_switch_color_picker("cyan");}else /*if((6<devetine)&&(devetine<10))*/{time_switch_color_picker("blue");}
+  if(led_min!=ure){pixels.setPixelColor(led_min, pixels.Color(w,j,k));pixels.setPixelColor(led_h, pixels.Color(255,255,255));}
+      else{pixels.setPixelColor(led_min, pixels.Color(255-w,255-w,255-w));}
+//delay(20);
+pixels.show();      
+}f=1;}
+//-------------------------------------------------------------------
+
+void blue_purple_gradient(float gradient)
+{
+ int devetine = gradient*10;
+ if (a==0){devetine_old=devetine;a=1;}
+ if(devetine!=devetine_old){blue_purple_fade(devetine);}
+ int devetine_old = devetine;
+ if(f==0){
+ for (int i=12;i<(LED_NUM - devetine);i++)
+    {
+      pixels.setPixelColor(i,pixels.Color(0,0,255));
+      Serial.print("   ");
+      Serial.print(i);
+    }
+    Serial.print("  |  ");
+    float q=1.0/3.0;
+    n=1.0;
+    if (devetine<3){FADE_STEPS=devetine;}
+    else{FADE_STEPS=3;}
+ for (int i=(LED_NUM-devetine);i<(LED_NUM-devetine+FADE_STEPS);i++)
+    {
+      pixels.setPixelColor(i,pixels.Color(0+255*q*n,0,255));
+      int s=0+255*q*n;
+      Serial.print(s);
+      Serial.print("   ");
+      Serial.print(FADE_STEPS);
+      Serial.print("   .  ");
+      Serial.print(i);
+      n+=1;
+
+    }
+ 
+    Serial.print("  |  ");
+ if(devetine>3)
+  {
+    for(int i=(LED_NUM-devetine+FADE_STEPS);i<=LED_NUM;i++)
+      {
+        pixels.setPixelColor(i,pixels.Color(255,0,255));
+              Serial.print("   ");
+      Serial.print(i);
+      }
+      Serial.println(" ");
+  }
+  //pixels.show();
+  if((1<devetine)&&(devetine<6)){time_switch_color_picker("blue");}
+  else /*((6<devetine)&&(devetine<10))*/{time_switch_color_picker("purple");}//pazi 6< in <6
+
+  Serial.print("devetine:  ");
+  Serial.print(devetine);
+  Serial.print("   ");
+  Serial.print("LED za minute: ");
+  Serial.print(led_min);
+  Serial.print("   Gradient:");
+  Serial.println(gradient);
+}else{Serial.print("Izvedla se je animacija, zato se fiksen prikaz ni.");f=0;}}
+
+//------------------------------------------------------------------
+void blue_purple_fade(unsigned int float_k) //animiran center gradient ; TEST FUNCTION!!!!!!!!!!!!!!!!!!!!
+{
+//test potreben, maybe bo nenavaden zamik med kazalci fade pa main animacija fadeom
+for(int b=0;b<=42;b++)//42=127/3; različen gradient-->spremeni cifre, drgač same thing
+{     for (int i=12;i<(LED_NUM-(devetine+1));i++){pixels.setPixelColor(i,pixels.Color(0,0,255));}
+pixels.setPixelColor((LED_NUM-devetine),pixels.Color(2*b,0,255));
+pixels.setPixelColor((LED_NUM-(devetine-1)),pixels.Color(4*b,0,255));//test ce je 2 oz. 3*b boljse od 42+b
+pixels.setPixelColor((LED_NUM-(devetine-2)),pixels.Color(6*b,0,255));
+      if(devetine>3){for(int i=(LED_NUM-(devetine-3));i<LED_NUM;i++){pixels.setPixelColor(i, pixels.Color(255,0,255));}}
+  if((1<devetine)&&(devetine<6)){time_switch_color_picker("cyan");}else /*if((6<devetine)&&(devetine<10))*/{time_switch_color_picker("blue");}
+  if(led_min!=ure){pixels.setPixelColor(led_min, pixels.Color(w,j,k));pixels.setPixelColor(led_h, pixels.Color(255,255,255));}
+      else{pixels.setPixelColor(led_min, pixels.Color(255-w,255-w,255-w));}
+//delay(20);
+pixels.show();      
+}f=1;}
+//-------------------------------------------------------------------
+
+void spanje()
+{
+  if(cajt=>konec_dneva)
+  {
+    //fade out loop
+  }
+}
+
+
+//wifi setup stuff:
+void wifi_connection()
+{
+  
+}
+
+bool testWifi(void)
+{
+  int c = 0;
+  Serial.println("Waiting for Wifi to connect");
+  while ( c < 20 ) {
+    if (WiFi.status() == WL_CONNECTED)
+    {
+      return true;
+    }
+    delay(500);
+    Serial.print("*");
+    c++;
+  }
+  Serial.println("");
+  Serial.println("Connect timed out, opening AP");
+  return false;
+}
+
+void launchWeb()
+{
+  Serial.println("");
+  if (WiFi.status() == WL_CONNECTED)
+    Serial.println("WiFi connected");
+  Serial.print("Local IP: ");
+  Serial.println(WiFi.localIP());
+  Serial.print("SoftAP IP: ");
+  Serial.println(WiFi.softAPIP());
+  createWebServer();
+  // Start the server
+  server.begin();
+  Serial.println("Server started");
+}
+
+void setupAP(void)
+{
+  WiFi.mode(WIFI_STA);
+  WiFi.disconnect();
+  delay(100);
+  int n = WiFi.scanNetworks();
+
+   Serial.println("");
+  st = "<ol>";
+  for (int i = 0; i < n; ++i)
+  {
+    // Print SSID and RSSI for each network found
+    st += "<li>";
+    st += WiFi.SSID(i);
+    st += " (";
+    st += WiFi.RSSI(i);
+
+    st += ")";
+    st += (WiFi.encryptionType(i) == ENC_TYPE_NONE) ? " " : "*";
+    st += "</li>";
+  }
+  st += "</ol>";
+  delay(100);
+  WiFi.softAP("Hotspot od ure", "urca");
+  Serial.println("Initializing_softap_for_wifi credentials_modification");
+  launchWeb();
+  Serial.println("over");
+}
+
+void createWebServer()
+{
+  {
+    server.on("/", []() {
+
+      IPAddress ip = WiFi.softAPIP();
+      String ipStr = String(ip[0]) + '.' + String(ip[1]) + '.' + String(ip[2]) + '.' + String(ip[3]);
+      content = "<!DOCTYPE HTML>\r\n<html>Welcome to Wifi Credentials Update page";
+      content += "<form action=\"/scan\" method=\"POST\"><input type=\"submit\" value=\"scan\"></form>";
+      content += ipStr;
+      content += "<p>";
+      content += st;
+      content += "</p><form method='get' action='setting'><label>SSID: </label><input name='ssid' length=32><input name='pass' length=64><input type='submit'></form>";
+      content += "</html>";
+      server.send(200, "text/html", content);
+    });
+    server.on("/scan", []() {
+      //setupAP();
+      IPAddress ip = WiFi.softAPIP();
+      String ipStr = String(ip[0]) + '.' + String(ip[1]) + '.' + String(ip[2]) + '.' + String(ip[3]);
+
+      content = "<!DOCTYPE HTML>\r\n<html>go back";
+      server.send(200, "text/html", content);
+    });
+
+    server.on("/setting", []() {
+      String qsid = server.arg("ssid");
+      String qpass = server.arg("pass");
+      if (qsid.length() > 0 && qpass.length() > 0) {
+        Serial.println("clearing eeprom");
+        for (int i = 0; i < 96; ++i) {
+          EEPROM.write(i, 0);
+        }
+        Serial.println(qsid);
+        Serial.println("");
+        Serial.println(qpass);
+        Serial.println("");
+
+        Serial.println("writing eeprom ssid:");
+        for (int i = 0; i < qsid.length(); ++i)
+        {
+          EEPROM.write(i, qsid[i]);
+          Serial.print("Wrote: ");
+          Serial.println(qsid[i]);
+        }
+        Serial.println("writing eeprom pass:");
+        for (int i = 0; i < qpass.length(); ++i)
+        {
+          EEPROM.write(32 + i, qpass[i]);
+          Serial.print("Wrote: ");
+          Serial.println(qpass[i]);
+        }
+        EEPROM.commit();
+
+        content = "{\"Success\":\"saved to eeprom... reset to boot into new wifi\"}";
+        statusCode = 200;
+        ESP.reset();
+      } else {
+        content = "{\"Error\":\"404 not found\"}";
+        statusCode = 404;
+        Serial.println("Sending 404");
+      }
+      server.sendHeader("Access-Control-Allow-Origin", "*");
+      server.send(statusCode, "application/json", content);
+
+    });
+  }
+}
+/*
+void wifi_temporary()
+{
+  //refresha cajt
+Serial.println("Reading EEPROM ssid");
+
+  String esid;
+  for (int i = 0; i < 32; ++i)
+  {
+    esid += char(EEPROM.read(i));
+  }
+  Serial.println();
+  Serial.print("SSID: ");
+  Serial.println(esid);
+  Serial.println("Reading EEPROM pass");
+
+  String epass = "";
+  for (int i = 32; i < 96; ++i)
+  {
+    epass += char(EEPROM.read(i));
+  }
+  Serial.print("PASS: ");
+  Serial.println(epass);
+
+
+  WiFi.begin(esid.c_str(), epass.c_str());
+  if (testWifi())
+  {
+    Serial.println("Succesfully Connected!!!");
+    connection=1;
+    return;
+  }
+  else
+  {
+    Serial.println("Turning the HotSpot On");
+    launchWeb();
+    setupAP();// Setup HotSpot
+  }
+
+  Serial.println();
+  Serial.println("Waiting.");
+
+  while ((WiFi.status() != WL_CONNECTED))
+  {
+    Serial.print(".");
+    delay(100);
+    server.handleClient();
+  }
+timeClient.begin();
+
+timeClient.update();
+delay(10);
+ure = timeClient.getHours();
+minute = timeClient.getMinutes();
+sekunde = timeClient.getSeconds();
+delay(10);
+WiFi.disconnect();
+}*/
