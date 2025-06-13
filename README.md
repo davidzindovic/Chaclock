@@ -6,3 +6,5 @@ The code includes a sleep mode , which resets the uC entirely in order to preven
 The clock fades on sometime during the morning and fades off at a certain point during nightime.
 
 The colors and silhuette are meant to simbolize a meditating person, relating to chakras - hence the name Chaclock.
+
+![ChaClock](/3D models/Chaclock Assembly.png)
