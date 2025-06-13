@@ -7,4 +7,4 @@ The clock fades on sometime during the morning and fades off at a certain point 
 
 The colors and silhuette are meant to simbolize a meditating person, relating to chakras - hence the name Chaclock.
 
-![ChaClock](/3D models/Chaclock Assembly.png)
+![ChaClock](/3D_models/Chaclock_Assembly.png)
